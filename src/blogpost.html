@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html itemscope itemtype="http://schema.org/Blog">
+	<head>
+    <title>How I Made Contracts.ruby Faster - adit.io</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="width=320"></meta>
+    <meta itemprop="name" content="adit.io">
+    <meta itemprop="description" content="Aditya Bhargava's personal blog.">
+    <meta name="description" content="Aditya Bhargava's personal blog.">
+    <link href="http://fonts.googleapis.com/css?family=Ovo|Raleway:100" rel="stylesheet" type="text/css">
+    <link rel="stylesheet" href="../css/reset.css">
+    <link rel="stylesheet" href="../css/disqus.css">
+    <link rel="stylesheet" href="../css/prettify.css">
+    <link rel="stylesheet" href="../css/style.css">
+    <link rel="stylesheet" href="../css/bootstrap.css">
+    <script type="text/javascript" src="../js/prettify/prettify.js"></script>
+    <script type="text/javascript" src="../js/prettify/lang-hs.js"></script>
+    <script type="text/javascript" src="../js/ga.js"></script>
+	</head>
+  <body onload="prettyPrint()">
+    <ul id="menu">
+      <li><a href="../index.html">&gt; adit.io</a></li>
+      <li><a href="http://git.io/egon">Github</a></li>
+      <li><a href="http://twitter.com/_egonschiele">Twitter</a></li>
+    </ul>
+    <div id="container" class="container">
+      <div class="row">
+        <!--
+        <div id="sidebar" class="span1">
+          <h1 id="title"><a href="/index.html">adit.io</a></h1>
+          <ul id="menu">
+            <li><a href="http://git.io/egon">Github</a></li>
+            <li><a href="http://twitter.com/_egonschiele">Twitter</a></li>
+            <li><a href="/resume.html">Resume</a></li>
+            <li><a href="mailto:&#097;&#100;&#105;&#116;&#121;&#097;&#064;&#119;&#101;&#102;&#111;&#117;&#110;&#100;&#108;&#097;&#110;&#100;&#046;&#099;&#111;&#109;">Email</a></li>
+            <li><a href="/rss.xml">RSS</a></li>
+          </ul>
+          <div id="social">
+            <iframe src="//www.facebook.com/plugins/like.php?href&amp;send=false&amp;layout=button_count&amp;width=100&amp;show_faces=false&amp;action=like&amp;colorscheme=light&amp;font&amp;height=21" scrolling="no" frameborder="0" style="border:none; overflow:hidden; width:100px; height:21px;" allowTransparency="true"></iframe>
+          </div>
+        </div>
+        -->
+
+        <div id="content" class="span9">
+          <h1>How I Made Contracts.ruby Faster</h1>
+<p class="light">Written March  4, 2013</p>
+  <p class="light"></p>
+
+<h2 id="seconds">20 seconds</h2>
+<p>tl;dr: contracts.ruby is now 10x faster.</p>
+<p>
+  <a href="https://github.com/egonSchiele/contracts.ruby">contracts.ruby</a> is my project to add code contracts to Ruby. Here’s what it looks like:</p>
+<pre class="lang-rb">
+  <code class="lang-rb">Contract Num, Num =&gt; Num
+def add(a, b)
+  a + b
+end</code>
+</pre>
+<p>Now, whenever <code class="lang-rb">add</code> is called, the parameters and return value will get checked. Cool!</p>
+<p>This weekend I benchmarked this library and found that it has abysmal performance:</p>
+<pre class="lang-rb">
+  <code class="lang-rb">                                     user     system      total        real
+testing add                      0.510000   0.000000   0.510000 (  0.509791)
+testing contracts add           20.630000   0.040000  20.670000 ( 20.726758)</code>
+</pre>
+<p>This is after running both functions 1,000,000 times on random input.</p>
+<p>So adding contracts on a function results in a <em>massive</em> (40x) slowdown. I dug into why.</p>
+<h2 id="seconds-1">8 seconds</h2>
+<p>I got a big win right away. When a contract passes, I call a function called <code class="lang-rb">success_callback</code>. The function is completely empty. Here’s the full definition:</p>
+<pre class="lang-rb">
+  <code class="lang-rb">def self.success_callback(data)
+end  </code>
+</pre>
+<p>It’s something I had put in “just in case” (yay futureproofing!). Turns out, function calls are very expensive in Ruby. Just removing this call saved me 8 seconds!</p>
+<pre class="lang-rb">
+  <code class="lang-rb">                                     user     system      total        real
+testing add                      0.520000   0.000000   0.520000 (  0.517302)
+testing contracts add           12.120000   0.010000  12.130000 ( 12.140564)</code>
+</pre>
+<p>Removing a lot of other extraneous function calls took me to <code class="lang-rb">9.84</code> -&gt; <code class="lang-rb">9.59</code> -&gt; <code class="lang-rb">8.01</code> seconds. This library is already more than twice as fast!</p>
+<p>Now things get a little more complex.</p>
+<h2 id="seconds-2">5.93 seconds</h2>
+<p>There are multiple ways to define a contract: lambdas, classes, plain ol’ values, etc. I had a big <code class="lang-rb">case</code> statement that checked to see what kind of contract it was. Based on the type of contract, I would do different things. I saved some time by changing this to an <code class="lang-rb">if</code> statement, but I was still spending unnecessary time going through this decision tree every time the function was called:</p>
+<pre class="lang-rb">
+  <code class="lang-rb">if contract.is_a?(Class)
+  # check arg
+elsif contract.is_a?(Hash)
+  # check arg
+...</code>
+</pre>
+<p>I changed this to go through the tree <em>once</em>, when the contract is defined, and build lambdas:</p>
+<pre class="lang-rb">
+  <code class="lang-rb">if contract.is_a?(Class)
+  lambda { |arg| # check arg }
+elsif contract.is_a?(Hash)
+  lambda { |arg| # check arg }
+...</code>
+</pre>
+<p>Then I would validate an argument by passing it into this pre-calculated lambda, bypassing the branching logic completely. This saved me another 1.2 seconds.</p>
+<pre class="lang-rb">
+  <code class="lang-rb">                                     user     system      total        real
+testing add                      0.510000   0.000000   0.510000 (  0.516848)
+testing contracts add            6.780000   0.000000   6.780000 (  6.785446)</code>
+</pre>
+<p>Pre-computing some other if statements saved me almost another second:</p>
+<pre class="lang-rb">
+  <code class="lang-rb">                                     user     system      total        real
+testing add                      0.510000   0.000000   0.510000 (  0.516527)
+testing contracts add            5.930000   0.000000   5.930000 (  5.933225)</code>
+</pre>
+<h2 id="seconds-3">5.09 seconds</h2>
+<p>Switching out <code class="lang-rb">.times</code> for <code class="lang-rb">.zip</code> saved me almost another second:</p>
+<pre class="lang-rb">
+  <code class="lang-rb">                                     user     system      total        real
+testing add                      0.510000   0.000000   0.510000 (  0.507554)
+testing contracts add            5.090000   0.010000   5.100000 (  5.099530)</code>
+</pre>
+<p>Turns out,</p>
+<pre class="lang-rb">
+  <code class="lang-rb">args.zip(contracts).each do |arg, contract|</code>
+</pre>
+<p>is slower than</p>
+<pre class="lang-rb">
+  <code class="lang-rb">args.each_with_index do |arg, i|</code>
+</pre>
+<p>which is slower than</p>
+<pre class="lang-rb">
+  <code class="lang-rb">args.size.times do |i|</code>
+</pre>
+<p>
+  <code class="lang-rb">.zip</code> spends unnecessary time copying and creating a new array. And I think <code class="lang-rb">.each_with_index</code> is slower because it just <code class="lang-rb">yield</code>s to <code class="lang-rb">.each</code> in the background, so it involves two yields instead of one.</p>
+<h2 id="seconds-4">4.23 seconds</h2>
+<p>Now we’re getting into some nitty-gritty stuff. The way the contracts library works is, for every method, a new method is added using <code class="lang-rb">class_eval</code> (<a href="http://greyblake.com/blog/2012/09/02/ruby-perfomance-tricks/">class_eval is faster than define_method</a>). This new method contains a reference to the old method. When the new method is called, it checks the arguments, then calls the old method with the arguments, then checks the return value, and then returns the return value. All of this happens with two method calls to the <code class="lang-rb">Contract</code> class: <code class="lang-rb">check_args</code> and <code class="lang-rb">check_result</code>. I eliminated these two method calls and did the checks right in the new method instead. This got me another .9 seconds:</p>
+<pre class="lang-rb">
+  <code class="lang-rb">                                     user     system      total        real
+testing add                      0.530000   0.000000   0.530000 (  0.523503)
+testing contracts add            4.230000   0.000000   4.230000 (  4.244071)</code>
+</pre>
+<h2 id="seconds-5">2.94 seconds</h2>
+<p>Earlier I had explained how I was creating <code class="lang-rb">lambda</code>s based on the type of Contract and then using those to check arguments. I switched this out to generate code instead, which would then get eval’d when I used <code class="lang-rb">class_eval</code> to create my new method. An awful hack! But it avoided a bunch of method calls and saved me another 1.25 seconds:</p>
+<pre class="lang-rb">
+  <code class="lang-rb">                                     user     system      total        real
+testing add                      0.520000   0.000000   0.520000 (  0.519425)
+testing contracts add            2.940000   0.000000   2.940000 (  2.942372)</code>
+</pre>
+<h2 id="seconds-6">1.57 seconds</h2>
+<p>Finally, I changed how I called overridden method. My earlier approach was using a reference:</p>
+<pre class="lang-rb">
+  <code class="lang-rb"># simplification
+old_method = method(name)
+
+class_eval %{
+    def #{name}(*args)
+        old_method.bind(self).call(*args)
+    end
+}</code>
+</pre>
+<p>I changed it to use <code class="lang-rb">alias_method</code>:</p>
+<pre class="lang-rb">
+  <code class="lang-rb">alias_method :&quot;original_#{name}&quot;, name
+class_eval %{
+    def #{name}(*args)
+        self.send(:&quot;original_#{name}&quot;, *args)
+      end
+}</code>
+</pre>
+<p>This bought me a crazy 1.4 seconds. I have no idea why <code class="lang-rb">alias_method</code> is so fast…I’m guessing because it skips a method call as well a call to <code class="lang-rb">.bind</code>.</p>
+<pre class="lang-rb">
+  <code class="lang-rb">                                     user     system      total        real
+testing add                      0.520000   0.000000   0.520000 (  0.518431)
+testing contracts add            1.570000   0.000000   1.570000 (  1.568863)</code>
+</pre>
+<h2 id="results">Results</h2>
+<p>We managed to get from 20 seconds to 1.5 seconds! Is it possible to do better than this? I don’t think so. I wrote <a href="https://gist.github.com/egonSchiele/5086572">this test script</a> that shows that a wrapped <code class="lang-rb">add</code> method will be 3x as slow as a regular <code class="lang-rb">add</code> method, so these numbers are really good.</p>
+<p>But it’s only 3x as slow because the method is so simple that more time is spent in calling the method. Here’s a more realistic example: a function that reads a file 100,000 times:</p>
+<pre class="lang-rb">
+  <code class="lang-rb">                                     user     system      total        real
+testing read                     1.200000   1.330000   2.530000 (  2.521314)
+testing contracts read           1.530000   1.370000   2.900000 (  2.903721)</code>
+</pre>
+<p>Very little slowdown! And I think most functions will see very little slowdown…the <code class="lang-rb">add</code> function is an outlier.</p>
+<p>I decided not to use <code class="lang-rb">alias_method</code> because it pollutes the namespace and those aliased functions would show up everywhere (documentation, auto-complete for IDEs, etc).</p>
+<p>Some takeaways:</p>
+<ol style="list-style-type: decimal">
+  <li>Method calls are <em>very</em> slow in Ruby! I enjoy making my code very modular and reusable, but it might be time for me to start inlining more code.</li>
+  <li>Benchmark your code! Removing a simple unused method took me from 20 seconds to 12 seconds.</li>
+</ol>
+<h2 id="other-things-to-try">Other things to try</h2>
+<h3 id="method-combinators">Method combinators</h3>
+<p>One feature that didn’t make it into Ruby 2.0 was method combinators, which would have allowed you to write</p>
+<pre class="lang-rb">
+  <code class="lang-rb">class Foo
+  def bar:before
+    # will always run before bar, when bar is called
+  end
+
+  def bar:after
+    # will always run after bar, when bar is called
+    # may or may not be able to access and/or change bar's return value
+  end
+end</code>
+</pre>
+<p>This would’ve made it easier to write decorators, and might have been faster too.</p>
+<h3 id="keyword-old">keyword <code class="lang-rb">old</code></h3>
+<p>Another feature that didn’t make it into Ruby 2.0, that would have allowed you to reference an overwritten method:</p>
+<pre class="lang-rb">
+  <code class="lang-rb">class Foo
+  def bar
+    'Hello'
+  end
+end 
+
+class Foo
+  def bar
+    old + ' World'
+  end
+end
+
+Foo.new.bar # =&gt; 'Hello World'</code>
+</pre>
+<h3 id="redefining-a-method-with-redef">redefining a method with <code class="lang-rb">redef</code></h3>
+<p>This one got rejected by Matz who said:</p>
+<blockquote>
+  <p>To eliminate <code class="lang-rb">alias_method_chain</code>, we introduced <code class="lang-rb">Module#prepend</code>. There’s no chance to add redundant feature in the language.</p>
+</blockquote>
+<p>So if <code class="lang-rb">redef</code> is a redundant feature, maybe <code class="lang-rb">prepend</code> could be used to write a decorator?</p>
+<h3 id="other-implementations">Other implementations</h3>
+<p>So far, all of this has been tested on YARV. Maybe Rubinius would allow me to optimize more?</p>
+<h2 id="references">References</h2>
+<ul>
+  <li>
+    <a href="http://www.igvita.com/2008/07/08/6-optimization-tips-for-ruby-mri/">6 Optimization Tips for Ruby MRI</a>
+  </li>
+  <li>
+    <p>
+      <a href="http://stackoverflow.com/a/4471202/139117">When monkey patching a method, can you call the overridden method from the new implementation?</a>
+    </p>
+  </li>
+  <li>
+    <a href="https://github.com/egonSchiele/contracts.ruby">Check out contracts.ruby here</a>.</li>
+  <li>
+    <p>If you are already using contracts.ruby, upgrade to v <code class="lang-rb">0.1.4</code> to see the speedup.</p>
+  </li>
+</ul>
+
+
+
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+    /* * * CONFIGURATION VARIABLES: EDIT BEFORE PASTING INTO YOUR WEBPAGE * * */
+    var disqus_shortname = 'aditio'; // required: replace example with your forum shortname
+    // var disqus_developer = 1; // developer mode is on
+
+
+    /* * * DON'T EDIT BELOW THIS LINE * * */
+    (function() {
+        var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+        dsq.src = 'http://' + disqus_shortname + '.disqus.com/embed.js';
+        (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+    })();
+</script>
+<noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+<a href="http://disqus.com" class="dsq-brlink">blog comments powered by <span class="logo-disqus">Disqus</span></a>
+
+
+        </div>
+        <div class="span3">
+          
+<ul id="sections">
+<h2>Contents</h2>
+<li><a href="#seconds">20 Seconds</a></li>
+<li><a href="#seconds-1">8 Seconds</a></li>
+<li><a href="#seconds-2">5.93 Seconds</a></li>
+<li><a href="#seconds-3">5.09 Seconds</a></li>
+<li><a href="#seconds-4">4.23 Seconds</a></li>
+<li><a href="#seconds-5">2.94 Seconds</a></li>
+<li><a href="#seconds-6">1.57 Seconds</a></li>
+<li><a href="#results">Results</a></li>
+<li><a href="#other-things-to-try">Other Things To Try</a></li>
+<li><a href="#references">References</a></li>
+
+</ul>
+
+        </div>
+      </div>
+    </div>
+		</body>
+	</html>

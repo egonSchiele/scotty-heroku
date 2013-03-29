@@ -1,14 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 import Web.Scotty
-import System.Environment
-import Data.Monoid (mconcat)
+import System.IO.Unsafe
+import qualified Data.Text.Lazy as T
 
-main = do
-    port <- getEnv "PORT"
-    scotty (fromIntegral $ read port) $ do
-      get "/" $ do
-        html . mconcat $ ["This is Scotty on Heroku!"]
+contents = T.pack . unsafePerformIO $ readFile "blogpost.html"
 
-      get "/:word" $ do
-        beam <- param "word"
-        html $ mconcat ["<h1>Scotty, ", beam, " me up!</h1>"]
+main = scotty 8234 $ do
+  get "/" $ do
+    html contents
+
