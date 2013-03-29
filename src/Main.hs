@@ -4,7 +4,7 @@ import System.IO.Unsafe
 import qualified Data.Text.Lazy as T
 import System.Environment
 
-contents = T.pack . unsafePerformIO $ readFile "blogpost.html"
+contents = T.pack . unsafePerformIO $ readFile "src/blogpost.html"
 
 main = do
   port <- getEnv "PORT"
