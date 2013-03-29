@@ -1,14 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Main where
+import Web.Scotty
 
-import System.Environment
-import Network.HTTP.Types (status200)
-import Network.Wai
-import Network.Wai.Handler.Warp (run)
+import Data.Monoid (mconcat)
 
-application _ = return $
-  responseLBS status200 [("Content-Type", "text/plain")] "Hello world.\n\nThis is Haskell on Heroku.\nhttps://github.com/pufuwozu/haskell-buildpack-demo"
+main = scotty 3000 $ do
+  get "/" $ do
+    html . mconcat $ ["This is Scotty on Heroku!"]
 
-main = do
-  port <- getEnv "PORT"
-  run (fromIntegral $ read port) application
+  get "/:word" $ do
+    beam <- param "word"
+    html $ mconcat ["<h1>Scotty, ", beam, " me up!</h1>"]
