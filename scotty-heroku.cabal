@@ -21,5 +21,6 @@ executable scotty-heroku
                      , http-types ==0.7.*
                      , scotty
                      , text
+                     , bytestring
   Extra-Source-Files:  src/blogpost.html
   Data-Files:          src/blogpost.html
