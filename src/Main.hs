@@ -7,6 +7,8 @@ import qualified Data.Text.Encoding.Error as Err
 import qualified Data.ByteString as BS
 import System.Environment
 
+import Data.Monoid (mconcat)
+
 contents = T.pack . show . (E.decodeUtf8With Err.lenientDecode) . unsafePerformIO $ BS.readFile "src/blogpost.html"
 
 main = do
