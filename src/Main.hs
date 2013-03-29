@@ -1,9 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 import Web.Scotty
-
+import System.Environment
 import Data.Monoid (mconcat)
 
-main = scotty 3000 $ do
+main = do
+    port <- getEnv "PORT"
+    scotty (fromIntegral $ read port) $ do
   get "/" $ do
     html . mconcat $ ["This is Scotty on Heroku!"]
 
