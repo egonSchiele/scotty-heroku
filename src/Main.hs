@@ -7,7 +7,7 @@ import qualified Data.Text.Encoding.Error as Err
 import qualified Data.ByteString as BS
 import System.Environment
 
-contents = (E.decodeUtf8With Err.lenientDecode) . unsafePerformIO $ BS.readFile "src/blogpost.html"
+contents = T.pack . show . (E.decodeUtf8With Err.lenientDecode) . unsafePerformIO $ BS.readFile "src/blogpost.html"
 
 main = do
   port <- getEnv "PORT"
